@@ -212,18 +212,24 @@ kube-proxy模式:
 在 userspace 模式下，kube-proxy 通过监听 K8s apiserver 获取关于 Service 和 Endpoint 的变化信息，在内存中维护一份从ClusterIP:Port 到后端 Endpoints 的映射关系，通过反向代理的形式，将收到的数据包转发给后端，并将后端返回的应答报文转发给客户端。该模式下，kube-proxy 会为每个 Service （每种协议，每个 Service IP，每个 Service Port）在宿主机上创建一个 Socket 套接字（监听端口随机）用于接收和转发 client 的请求。默认条件下，kube-proxy 采用 round-robin 算法从后端 Endpoint 列表中选择一个响应请求。
 
 ### iptables
-kube-proxy 会监视 apiserver 对 Service 对象和 Endpoints 对象的添加和移除。对每个 Service，它会添加上 iptables 规则，从而捕获到达该 Service 的 clusterIP（虚拟 IP）和端口的请求，进而将请求重定向到 Service 的一组 backend 中的某一个 Pod 上面。
+在 iptables 模式下，kube-proxy 依然需要通过监听 K8s apiserver 获取关于 Service 和 Endpoint 的变化信息。不过与 userspace 模式不同的是，kube-proxy 不再为每个 Service 创建反向代理（也就是无需创建 Socket 监听），而是通过安装 iptables 规则，捕获访问 Service ClusterIP:Port 的流量，直接重定向到指定的 Endpoints 后端。默认条件下，kube-proxy 会 随机 从后端 Endpoint 列表中选择一个响应请求。ipatbles 模式与 userspace 模式的不同之处在于，数据包的转发不再通过 kube-proxy 在用户空间通过反向代理来做，而是基于 iptables/netfilter 在内核空间直接转发，避免了数据的来回拷贝，因此在性能上具有很大优势，而且也避免了大量宿主机端口被占用的问题。
 
-我们还可以使用 Pod readiness 探针 验证后端 Pod 可以正常工作，以便 iptables 模式下的 kube-proxy 仅看到测试正常的后端，这样做意味着可以避免将流量通过 kube-proxy 发送到已知失败的 Pod 中，所以对于线上的应用来说一定要做 readiness 探针。
-
-iptables模式下，kube-proxy为Service后端的每个Pod创建对应的iptables规则，直接将发向Cluster IP的请求重定向到一个Pod的IP上。
-
-该模式下kube-proxy不承担四层负载均衡器的角色，只负责创建iptables规则。该模式的优点在于较userspace模式效率更高，但是不能提供灵活的LB策略，当后端Pod不可用的时候无法进行重试。
+但是将数据转发完全交给 iptables 来做也有个缺点，就是一旦选择的后端没有响应，连接就会直接失败了，而不会像 userspace 模式那样，反向代理可以支持自动重新选择后端重试，算是失去了一定的重试灵活性。不过，官方建议使用 Readiness 探针来解决这个问题，一旦检测到后端故障，就自动将其移出 Endpoint 列表，避免请求被代理到存在问题的后端。
 
 
 
 ### ipvs
-IPVS是LVS的负载均衡模块，亦基于netfilter，但比iptables性能更高，具备更好的可扩展性，采用增量式更新，并可以保证 service 更新期间连接保持不断开
+在 ipvs 模式下，kube-proxy 通过监听 K8s apiserver 获取关于 Service 和 Endpoint 的变化信息，然后调用 netlink 接口创建 ipvs 规则，并周期性地同步 Kubernetes Service/Endpoint 与 ipvs 规则，保证状态匹配。当客户端请求 Service 时，ipvs 会将流量重定向到指定的后端。
+
+ipvs 相比 iptables 的优势在于通过 hash table 实现了 O(1) 时间复杂度的规则匹配。当 Service 和 Endpoint 的数量急剧增加时，iptables 的匹配表项会变得十分庞大，而其采用的顺序匹配模式会严重影响其性能。相反，ipvs 无论在小规模集群还是大规模集群，都拥有几乎相同的性能表现，因此相比其他代理模式，能提供更高的网络吞吐量，更能满足大规模集群扩展性和高性能的需要。同时，ipvs 支持对后端的健康检查和连接重试，可靠性相比 iptables 更佳。此外，ipvs 模式还为用户提供了多种负载均衡策略以供选择，例如：
+
+rr: round-robin (轮询，默认采用)
+lc: least connection （最少连接数）
+dh: destination hashing （根据目的哈希）
+sh: source hashing （根据源哈希）
+sed: shortest expected delay （最小延迟）
+nq: never queue （不排队等待，有空闲 Server 直接分配给空闲 Server 处理，否则通过 sed 策略处理）
+ipvs 仍然使用 iptables 实现对数据包的过滤、SNAT 或 MASQ，但使用 ipset 来存储需要执行 MASQ 或 DROP 的源地址和目的地址，从而保证在大量 Service 存在的情况下，iptables 表项数量仍能维持在常数级。
 
 
 
