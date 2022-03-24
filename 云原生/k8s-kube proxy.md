@@ -22,13 +22,15 @@ kube-proxy 监听 API server 中 资源对象的变化情况，包括以下三�
 ```
 kubernetes
 |-cmd
-    |-kube-proxy
-        |-app
-            |-conntrack.go
-            |-init_others.go
-            |-server_others.go //模式代码
-            |-server.go //核心代码
-        |-proxy.go  // 启动命令
+|    |-kube-proxy
+|        |-app
+|            |-conntrack.go
+|            |-init_others.go
+|            |-server_others.go //模式代码
+|            |-server.go //核心代码|
+|        |-proxy.go  // 启动命令
+|-pkg
+    |-proxy
 ```
 
 ### 源码
@@ -201,6 +203,26 @@ type Provider interface {
 ```
 可以看出，这是一个接口类型。kebu-proxy也是利用这个接口类型，来实现不同系统的适配与不同模式的提供。
 
+```
+// server_others.go
+
+func newProxyServer(
+	config *proxyconfigapi.KubeProxyConfiguration,
+	cleanupAndExit bool,
+	master string) (*ProxyServer, error) {
+        ...
+        proxyMode := getProxyMode(string(config.Mode), canUseIPVS, iptables.LinuxKernelCompatTester{})
+        ...
+        if proxyMode == proxyModeIPTables {
+            ...
+        } else if proxyMode == proxyModeIPVS {
+            ...
+        } else {
+            ...
+        }
+```
+根据配置的模式不同，生成不同的proxier。
+
 kube-proxy模式:
 + userspace（很早版本默认）
 + iptables（默认）
@@ -240,6 +262,207 @@ winkernel 模式相对 winuserspace 模式的改进与 iptables 模式相对 use
 
 
 ## iptables模式
+```
+// server_others.go
 
-## IPVS模式
+if proxyMode == proxyModeIPTables {
+    klog.V(0).InfoS("Using iptables Proxier")
+    if config.IPTables.MasqueradeBit == nil {
+        // MasqueradeBit must be specified or defaulted.
+        return nil, fmt.Errorf("unable to read IPTables MasqueradeBit from config")
+    }
 
+    if dualStack {
+        klog.V(0).InfoS("kube-proxy running in dual-stack mode", "ipFamily", iptInterface.Protocol())
+        klog.V(0).InfoS("Creating dualStackProxier for iptables")
+        // Always ordered to match []ipt
+        var localDetectors [2]proxyutiliptables.LocalTrafficDetector
+        localDetectors, err = getDualStackLocalDetectorTuple(detectLocalMode, config, ipt, nodeInfo)
+        if err != nil {
+            return nil, fmt.Errorf("unable to create proxier: %v", err)
+        }
+
+        // TODO this has side effects that should only happen when Run() is invoked.
+        proxier, err = iptables.NewDualStackProxier(
+            ipt,
+            utilsysctl.New(),
+            execer,
+            config.IPTables.SyncPeriod.Duration,
+            config.IPTables.MinSyncPeriod.Duration,
+            config.IPTables.MasqueradeAll,
+            int(*config.IPTables.MasqueradeBit),
+            localDetectors,
+            hostname,
+            nodeIPTuple(config.BindAddress),
+            recorder,
+            healthzServer,
+            config.NodePortAddresses,
+        )
+    } else {
+        // Create a single-stack proxier if and only if the node does not support dual-stack (i.e, no iptables support).
+        var localDetector proxyutiliptables.LocalTrafficDetector
+        localDetector, err = getLocalDetector(detectLocalMode, config, iptInterface, nodeInfo)
+        if err != nil {
+            return nil, fmt.Errorf("unable to create proxier: %v", err)
+        }
+
+        // TODO this has side effects that should only happen when Run() is invoked.
+        proxier, err = iptables.NewProxier(
+            iptInterface,
+            utilsysctl.New(),
+            execer,
+            config.IPTables.SyncPeriod.Duration,
+            config.IPTables.MinSyncPeriod.Duration,
+            config.IPTables.MasqueradeAll,
+            int(*config.IPTables.MasqueradeBit),
+            localDetector,
+            hostname,
+            nodeIP,
+            recorder,
+            healthzServer,
+            config.NodePortAddresses,
+        )
+    }
+
+    if err != nil {
+        return nil, fmt.Errorf("unable to create proxier: %v", err)
+    }
+    proxymetrics.RegisterMetrics()
+}
+```
+iptables.NewProxier在kubernetes/pkg/proxy/iptables/proxier.go里面定义。通过上面使用，去监听service、endpoint，可以知道，主要的逻辑就是针对监听的回调函数操作。
+```
+// kubernetes/pkg/proxy/iptables/proxier.go
+
+// OnServiceAdd is called whenever creation of new service object
+// is observed.
+func (proxier *Proxier) OnServiceAdd(service *v1.Service) {
+	proxier.OnServiceUpdate(nil, service)
+}
+
+// OnServiceUpdate is called whenever modification of an existing
+// service object is observed.
+func (proxier *Proxier) OnServiceUpdate(oldService, service *v1.Service) {
+	if proxier.serviceChanges.Update(oldService, service) && proxier.isInitialized() {
+		proxier.Sync()
+	}
+}
+
+// OnServiceDelete is called whenever deletion of an existing service
+// object is observed.
+func (proxier *Proxier) OnServiceDelete(service *v1.Service) {
+	proxier.OnServiceUpdate(service, nil)
+
+}
+
+// OnServiceSynced is called once all the initial event handlers were
+// called and the state is fully propagated to local cache.
+func (proxier *Proxier) OnServiceSynced() {
+	proxier.mu.Lock()
+	proxier.servicesSynced = true
+	proxier.setInitialized(proxier.endpointSlicesSynced)
+	proxier.mu.Unlock()
+
+	// Sync unconditionally - this is called once per lifetime.
+	proxier.syncProxyRules()
+}
+
+// OnEndpointSliceAdd is called whenever creation of a new endpoint slice object
+// is observed.
+func (proxier *Proxier) OnEndpointSliceAdd(endpointSlice *discovery.EndpointSlice) {
+	if proxier.endpointsChanges.EndpointSliceUpdate(endpointSlice, false) && proxier.isInitialized() {
+		proxier.Sync()
+	}
+}
+
+// OnEndpointSliceUpdate is called whenever modification of an existing endpoint
+// slice object is observed.
+func (proxier *Proxier) OnEndpointSliceUpdate(_, endpointSlice *discovery.EndpointSlice) {
+	if proxier.endpointsChanges.EndpointSliceUpdate(endpointSlice, false) && proxier.isInitialized() {
+		proxier.Sync()
+	}
+}
+
+// OnEndpointSliceDelete is called whenever deletion of an existing endpoint slice
+// object is observed.
+func (proxier *Proxier) OnEndpointSliceDelete(endpointSlice *discovery.EndpointSlice) {
+	if proxier.endpointsChanges.EndpointSliceUpdate(endpointSlice, true) && proxier.isInitialized() {
+		proxier.Sync()
+	}
+}
+```
+可以看出，无论是add、update、delete，都会放进一个update的方法里面，update方法有两个参数，一个old_object，一个new_object，add就会把object放进new_object里面，delete就会把object放进old_object里面，update则同时放入old_object、new_object里面。并且可以看出，更新完后，他会去做一个同步操作。
+
+
+```
+// proxier.serviceChanges.Update(oldService, service) 
+// kubernetes/pkg/proxy/service.go
+
+// Update updates given service's change map based on the <previous, current> service pair.  It returns true if items changed,
+// otherwise return false.  Update can be used to add/update/delete items of ServiceChangeMap.  For example,
+// Add item
+//   - pass <nil, service> as the <previous, current> pair.
+// Update item
+//   - pass <oldService, service> as the <previous, current> pair.
+// Delete item
+//   - pass <service, nil> as the <previous, current> pair.
+func (sct *ServiceChangeTracker) Update(previous, current *v1.Service) bool {
+	svc := current
+	if svc == nil {
+		svc = previous
+	}
+	// previous == nil && current == nil is unexpected, we should return false directly.
+	if svc == nil {
+		return false
+	}
+	metrics.ServiceChangesTotal.Inc()
+	namespacedName := types.NamespacedName{Namespace: svc.Namespace, Name: svc.Name}
+
+	sct.lock.Lock()
+	defer sct.lock.Unlock()
+
+	change, exists := sct.items[namespacedName]
+	if !exists {
+		change = &serviceChange{}
+		change.previous = sct.serviceToServiceMap(previous)
+		sct.items[namespacedName] = change
+	}
+	change.current = sct.serviceToServiceMap(current)
+	// if change.previous equal to change.current, it means no change
+	if reflect.DeepEqual(change.previous, change.current) {
+		delete(sct.items, namespacedName)
+	} else {
+		klog.V(2).InfoS("Service updated ports", "service", klog.KObj(svc), "portCount", len(change.current))
+	}
+	metrics.ServiceChangesPending.Set(float64(len(sct.items)))
+	return len(sct.items) > 0
+}
+```
+可以看出来update方法，只是把service的信息整理构建成新得数据结构后，存放在items里面，并没有说去操作iptables。
+
+看刚才的同步函数，只是启动了proxier.syncRunner，不过从Proxier的初始化中，可以看出，proxier.syncRunner绑定了一个回调方法proxier.syncProxyRules。
+```
+// kubernetes/pkg/proxy/iptables/proxier.go
+
+// Sync is called to synchronize the proxier state to iptables as soon as possible.
+func (proxier *Proxier) Sync() {
+	if proxier.healthzServer != nil {
+		proxier.healthzServer.QueuedUpdate()
+	}
+	metrics.SyncProxyRulesLastQueuedTimestamp.SetToCurrentTime()
+	proxier.syncRunner.Run()
+}
+
+func NewProxier{
+    ...
+    proxier.syncRunner = async.NewBoundedFrequencyRunner("sync-runner", proxier.syncProxyRules, minSyncPeriod, time.Hour, burstSyncs)
+    ...
+}
+```
+通过看proxier.syncProxyRules方法，基本上关于iptables的操作都在里面了，并且也可以基本确定了kube-proxy的运行逻辑。通过informers监听service、endpoint资源的变化，然后构建一个items作为缓存，整理一段时间内的变化，最后通过一个定时任务，把缓存一口气更新到iptables里面。
+
+接下来观察proxier.syncProxyRules，去查看，kube-proxy是怎样写iptables的规则的。
+```
+// 创建必要的路由信息
+
+```
