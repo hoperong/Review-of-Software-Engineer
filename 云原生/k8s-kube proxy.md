@@ -461,8 +461,49 @@ func NewProxier{
 ```
 通过看proxier.syncProxyRules方法，基本上关于iptables的操作都在里面了，并且也可以基本确定了kube-proxy的运行逻辑。通过informers监听service、endpoint资源的变化，然后构建一个items作为缓存，整理一段时间内的变化，最后通过一个定时任务，把缓存一口气更新到iptables里面。
 
-接下来观察proxier.syncProxyRules，去查看，kube-proxy是怎样写iptables的规则的。
-```
-// 创建必要的路由信息
+接下来观察proxier.syncProxyRules，可以看到，kube-proxy会先确保创建好所需要的chain，然后根据service的信息与service目前是否存在endpoint，来对应向不同的chain里面写入不同的信息。
 
+### ClusterIP
 ```
+// iptables -S -t nat | grep dao-2048
+
+-A KUBE-SERVICES -d 172.31.214.223/32 -p tcp -m comment --comment "default/dao-2048: cluster IP" -m tcp --dport 80 -j KUBE-MARK-MASQ
+-A KUBE-SERVICES -d 172.31.214.223/32 -p tcp -m comment --comment "default/dao-2048: cluster IP" -m tcp --dport 80 -j KUBE-SVC-LXOEKJ2ZQE3MR4LO
+-A KUBE-SVC-LXOEKJ2ZQE3MR4LO -m comment --comment "default/dao-2048:" -m statistic --mode random --probability 0.33333333349 -j KUBE-SEP-EJFH32X3YSSCOZZG
+-A KUBE-SVC-LXOEKJ2ZQE3MR4LO -m comment --comment "default/dao-2048:" -m statistic --mode random --probability 0.50000000000 -j KUBE-SEP-J7YAF3N4OSYK74E3
+-A KUBE-SVC-LXOEKJ2ZQE3MR4LO -m comment --comment "default/dao-2048:" -j KUBE-SEP-ERKGB5P7AYO7SEF4
+-A KUBE-SEP-ERKGB5P7AYO7SEF4 -s 172.29.248.226/32 -m comment --comment "default/dao-2048:" -j KUBE-MARK-MASQ
+-A KUBE-SEP-ERKGB5P7AYO7SEF4 -p tcp -m comment --comment "default/dao-2048:" -m tcp -j DNAT --to-destination 172.29.248.226:80
+-A KUBE-SEP-J7YAF3N4OSYK74E3 -s 172.29.140.75/32 -m comment --comment "default/dao-2048:" -j KUBE-MARK-MASQ
+-A KUBE-SEP-J7YAF3N4OSYK74E3 -p tcp -m comment --comment "default/dao-2048:" -m tcp -j DNAT --to-destination 172.29.140.75:80
+-A KUBE-SEP-EJFH32X3YSSCOZZG -s 172.29.114.58/32 -m comment --comment "default/dao-2048:" -j KUBE-MARK-MASQ
+-A KUBE-SEP-EJFH32X3YSSCOZZG -p tcp -m comment --comment "default/dao-2048:" -m tcp -j DNAT --to-destination 172.29.114.58:80
+```
+创建一个ClusterIP服务，有3个实例，查看iptables，可以看到kube-proxy对应创建了许多规则。
+1. 会在KUBE-SERVICES下创建ClusterIP+端口的规则，把接收到的转发到“KUBE-SVC-”开头的规则下
+2. 会根据endpoint的数量创建以“KUBE-SVC-”开头的规则，把流量再转给以“KUBE-SEP-”开头的规则
+3. “KUBE-SEP-”开头的规则才会实际把流量转到每个pod里面
+
+### NodePort
+```
+// iptables -S -t nat | grep dao-2048
+
+-A KUBE-SERVICES -d 172.31.214.223/32 -p tcp -m comment --comment "default/dao-2048: cluster IP" -m tcp --dport 80 -j KUBE-MARK-MASQ
+-A KUBE-SERVICES -d 172.31.214.223/32 -p tcp -m comment --comment "default/dao-2048: cluster IP" -m tcp --dport 80 -j KUBE-SVC-LXOEKJ2ZQE3MR4LO
+-A KUBE-NODEPORTS -p tcp -m comment --comment "default/dao-2048:" -m tcp --dport 31180 -j KUBE-MARK-MASQ
+-A KUBE-NODEPORTS -p tcp -m comment --comment "default/dao-2048:" -m tcp --dport 31180 -j KUBE-SVC-LXOEKJ2ZQE3MR4LO
+-A KUBE-SVC-LXOEKJ2ZQE3MR4LO -m comment --comment "default/dao-2048:" -m statistic --mode random --probability 0.33333333349 -j KUBE-SEP-EJFH32X3YSSCOZZG
+-A KUBE-SVC-LXOEKJ2ZQE3MR4LO -m comment --comment "default/dao-2048:" -m statistic --mode random --probability 0.50000000000 -j KUBE-SEP-J7YAF3N4OSYK74E3
+-A KUBE-SVC-LXOEKJ2ZQE3MR4LO -m comment --comment "default/dao-2048:" -j KUBE-SEP-ERKGB5P7AYO7SEF4
+-A KUBE-SEP-ERKGB5P7AYO7SEF4 -s 172.29.248.226/32 -m comment --comment "default/dao-2048:" -j KUBE-MARK-MASQ
+-A KUBE-SEP-ERKGB5P7AYO7SEF4 -p tcp -m comment --comment "default/dao-2048:" -m tcp -j DNAT --to-destination 172.29.248.226:80
+-A KUBE-SEP-J7YAF3N4OSYK74E3 -s 172.29.140.75/32 -m comment --comment "default/dao-2048:" -j KUBE-MARK-MASQ
+-A KUBE-SEP-J7YAF3N4OSYK74E3 -p tcp -m comment --comment "default/dao-2048:" -m tcp -j DNAT --to-destination 172.29.140.75:80
+-A KUBE-SEP-EJFH32X3YSSCOZZG -s 172.29.114.58/32 -m comment --comment "default/dao-2048:" -j KUBE-MARK-MASQ
+-A KUBE-SEP-EJFH32X3YSSCOZZG -p tcp -m comment --comment "default/dao-2048:" -m tcp -j DNAT --to-destination 172.29.114.58:80
+```
+创建一个NodePort服务，有3个实例，查看iptables，可以看到kube-proxy对应创建了许多规则。
+1. 会在KUBE-NODEPORTS下创建针对nodeport的31180的规则，把接收到的转发到“KUBE-SVC-”开头的规则下
+2. 同时也会在KUBE-SERVICES下创建ClusterIP+端口的规则，把接收到的转发到“KUBE-SVC-”开头的规则下
+3. 会根据endpoint的数量创建以“KUBE-SVC-”开头的规则，把流量再转给以“KUBE-SEP-”开头的规则
+4. “KUBE-SEP-”开头的规则才会实际把流量转到每个pod里面
