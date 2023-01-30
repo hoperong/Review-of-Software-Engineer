@@ -1,10 +1,6 @@
-https://github.com/agronholm/apscheduler
-
 # APScheduler
-
 ## 概述
-
-Advanced Python Scheduler（APScheduler）是一个Python库，可让您安排Python代码稍后执行，一次或定期执行。您可以根据需要动态添加或删除旧作业。如果将作业存储在数据库中，它们也将在调度程序重新启动并保持其状态的过程中幸免。重新启动调度程序后，它将运行脱机1时应运行的所有作业。
+Advanced Python Scheduler（APScheduler）是一个Python库，https://github.com/agronholm/apscheduler，可让您安排Python代码稍后执行，一次或定期执行。您可以根据需要动态添加或删除旧作业。如果将作业存储在数据库中，它们也将在调度程序重新启动并保持其状态的过程中幸免。重新启动调度程序后，它将运行脱机1时应运行的所有作业。
 
 除其他事项外，APScheduler可用作跨平台的，特定于应用程序的替代程序，以替换平台特定的计划程序，例如cron守护程序或Windows任务计划程序。但是请注意，APScheduler本身不是守护程序或服务，也不是任何命令行工具附带的。它主要是要在现有应用程序中运行。也就是说，APScheduler确实为您提供了一些构建块，以构建调度程序服务或运行专用的调度程序进程。
 
@@ -15,9 +11,7 @@ triggers：触发器，执行job的形式。
 executors：执行器，job的运行模式。
 
 简单来说，apscheduler这个库，就是提供任务调度功能，创建一个scheduler管理多个job，使用各种存储形式保存job信息以此构建job对象，利用triggers去描述job执行的条件并且去触发job的执行，通过executors去运行job。
-
 ## jobstores
-
 在apscheduler->jobstores->base.py里面定义了BaseJobStore类，作为job的基础类，里面使用@abstractmethod（python的抽象方法）来定义子类规范，然后通过继承BaseJobStore类，去写支持不同存储底层的jobstore子类，最终实现不同存储类型的job。
 
 抽象方法有：
@@ -117,7 +111,6 @@ class SQLAlchemyJobStore(BaseJobStore):
 ```
 
 ## triggers
-
 trigger也是和jobstore一样，使用父类BaseTrigger定义抽象方法，子类继承，来实现多种trigger。
 
 抽象方法：
@@ -166,7 +159,6 @@ class IntervalTrigger(BaseTrigger):
 ```
 
 ## executors
-
 executor也是和jobstore一样，使用父类BaseExecutor定义抽象方法，子类继承，来实现多种executor。
 
 抽象方法：
@@ -217,7 +209,6 @@ class ThreadPoolExecutor(BasePoolExecutor):
 ```
 
 ## job
-
 apscheduler->job.py
 ```
 class Job(object):
@@ -255,7 +246,6 @@ class Job(object):
 ```
 
 ## schedulers
-
 scheduler也是和jobstore一样，使用父类BaseScheduler定义抽象方法，子类继承，来实现多种scheduler。
 
 拿background举例。

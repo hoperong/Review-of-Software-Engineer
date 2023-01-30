@@ -2,13 +2,14 @@
 说到云原生监控方案，第一时间基本上都会想到Prometheus+AlertManager+Grafana的一套成熟解决方案。Prometheus作为监控核心，具备强大的数据模型、高效率运作、丰富的监控能力、强大的查询语言PromQL、简单易用、管理方便等特点。但是Prometheus目前在高可用层面上做的还并不完美。为此，在开源社区中，孕育出了许多替代、增强方案，VictoriaMetrics属于其中较为优异的一个，是一个快速、经济高效且可扩展的监控解决方案和时间序列数据库。
 ## 突出特点
 1. 它可以作为Prometheus的长期储存，且支持Prometheus查询API，可以在Grafana中用作Prometheus的代替品
-2. 由一个没有外部依赖的小型可执行文件组成，易于设置和操作
+2. 部署简单，无论是单节点版本还是集群版本，都只需要运行所需的组件可执行文件（每个组件都是一个可执行文件），运行前不需要安装任何依赖，易于设置和操作
 3. 使用vmbackup/vmrestore工具可以轻松快速地将即时快照备份到S3或GCS
 4. 基于PromQL的查询语言实现MetricsQL，对PromSQL进行改造
 5. 读写性能比InfluxDB和TimescaleDB高达20倍；百万时间序列数据下，内存使用比InfluxDB少10倍，比Prometheus、Thanos或Cortex少7倍；数据高压缩，与Prometheus、Thanos或Cortex相比，所需的存储空间最多可减少7倍
 6. 具有高延迟IO和低IOPS
 7. 支持从第三方时序数据库获取数据源
 
+### 快速接入Prometheus获取数据源
 数据源接入层面，VictoriaMetrics支持通过Prometheus的远程写入方式直接兼容Prometheus的数据写入，同时也支持搜集多个Prometheus数据汇总
 ```
 remote_write:
@@ -26,27 +27,24 @@ VictoriaMetrics还支持直接取代Prometheus进行exporter搜集
 ```
 
 针对Prometheus，VictoriaMetrics进行了一些优化：
-1. 增加了```extra_label=<label_name>=<label_value>```可选的查询支持
-2. 增加了```extra_filters[]=series_selector```可选的查询支持
-3. 支持相对时间time
-4. 在```/api/v1/query and /api/v1/query_range```中增加了round_digits参数
-5. 在```/api/v1/labels and /api/v1/label/<labelName>/values```中增加了limit参数
-6. 在```/api/v1/series```中增加了limit参数
-7. 新增```/api/v1/series/count```
-8. 新增```/api/v1/status/active_queries```
-9. 新增```/api/v1/status/top_queries```
+1. 增加了```extra_label=<label_name>=<label_value>```可选的查询支持，可用于基于额外标签进行查询过滤。例如```/api/v1/query_range?extra_label=user_id=123&extra_label=group_id=456&query=<query>```，会返回额外标签中包含```{user_id="123",group_id="456"}```的结果
+2. 增加了```extra_filters[]=series_selector```可选的查询支持，可用于基于拓展标签进行规则匹配的查询过滤。例如```/api/v1/query_range?extra_filters[]={env=~"prod|staging",user="xyz"}&query=<query>```，会返回额外标签中包含```{env=~"prod|staging",user="xyz"}```的结果
+3. 支持```start```和```end```，使用多种时间格式，如1562529662.678、2022-03-29T01:02:03Z、2022-03、1h5m等
+4. 在```/api/v1/query```和```/api/v1/query_range```中增加了round_digits参数，它可用于将响应值四舍五入到小数点后给定的位数。
+5. 在```/api/v1/labels and /api/v1/label/<labelName>/values```中增加了limit参数，用于限制返回条目的数量
+6. 在```/api/v1/series```中增加了limit参数，用于限制返回条目的数量
+7. 新增```/api/v1/series/count```，返回数据库中时间序列的总数
+8. 新增```/api/v1/status/active_queries```，返回当前正在运行的查询列表
+9. 新增```/api/v1/status/top_queries```，返回```topByCount```最常执行的查询；返回```topByAvgDuration```平均执行持续时间最长的查询；返回```topBySumDuration```执行时间最长的查询；
 
 除了支持Prometheus作为数据源外，VictoriaMetrics还支持其他数据源：
 1. DataDog agent
 2. InfluxDB-compatible agents such as Telegraf
 3. Graphite-compatible agents such as StatsD
 4. OpenTSDB-compatible agents
-5. ......
 ## 架构
-面对获取速率低于每秒一百万个数据点的场景下，官方建议使用单节点版本而不是群集版本。单节点版本可以根据CPU内核、RAM和可用存储空间的数量完美扩展。与群集版本相比，单节点版本更易于配置和操作，因此在选择群集版本之前要三思。
-### 单点部署
-可以通过直接运行```./victoria-metrics-prod```，即可以单节点的形式运行VictoriaMetrics，默认用8428提供API查询服务
-### 集群模式
+面对获取速率低于每秒一百万个数据点的场景下，官方建议使用单节点版本而不是集群版本。单节点版本可以根据CPU内核、RAM和可用存储空间的数量完美扩展。与集群版本相比，单节点版本更易于配置和操作，因此在选择集群版本之前要三思。
+
 ![VictoriaMetrics Cluster](https://docs.victoriametrics.com/assets/images/Naive_cluster_scheme.png)
 
 VictoriaMetrics集群由以下服务组成：
@@ -54,17 +52,17 @@ VictoriaMetrics集群由以下服务组成：
 2. vminsert，接受接收的数据，并根据对度量名称及其所有标签的一致哈希在vmstorage节点之间传播数据
 3. vmselect，通过从所有配置的vmstorage节点获取所需数据来执行传入查询
 
-每个服务可以独立扩展，并且可以在最合适的硬件上运行。vmstorage节点不了解彼此，不相互通信，也不共享任何数据。这是一个无共享架构。它提高了群集可用性，简化了群集维护和群集扩展。
+每个服务可以独立扩展，并且可以在最合适的硬件上运行。vmstorage节点不了解彼此，不相互通信，也不共享任何数据。这是一个无共享架构。它提高了集群可用性，简化了集群维护和集群扩展。
 
 VictoriaMetrics在开源层面，提供以下组件：
-1. vmui：负责vm页面展示
-2. vmagent：负责数据采集、重新标记和过滤收集
-3. vminsert：负责数据插入
-4. vmstorage：负责数据存储
-5. vmselect：负责数据查询
-6. vmalert：负责告警
-7. vmbackup：负责数据备份
-8. vmrestore：负责数据还原
+1. vmui：负责vm页面展示，提供数据查询、指标与基数查询、查询分析、链路分析、job分析面板等功能
+2. vmagent：负责数据采集、重新标记和过滤收集，并通过Prometheus协议将数据存储到VictoriaMetrics或其他支持Prometheus协议的存储系统中。支持按时间和标签聚合样本后同时复制多个远程存储系统，且能在传输故障时缓存数据，等待恢复后继续传输；支持抓取暴露数百万时间序列的目标与写入多个租户中；支持kafka读写
+3. vminsert：负责数据插入，支持不同格式、不同租户的数据
+4. vmstorage：负责数据存储，具有高压缩率、低资源消耗、高性能的特点
+5. vmselect：负责数据查询，支持数据统一查询与多租户数据隔离查询
+6. vmalert：负责告警，和Prometheus一样支持纪录、告警两种规则配置与发送告警通知，允许在注解中使用Go 模板来格式化数据、迭代或执行表达式，支持跨租户发送警报和记录规则
+7. vmbackup：负责数据备份，支持增量备份和全量备份，可以做到每小时、每天、每周和每月备份，支持本地存储、GCS、Azure Blob 存储、S3存储、任何与 S3 兼容的存储
+8. vmrestore：负责数据还原，支持随时中断与自动从断点恢复
 ## 能力
 ### 保存
 VictoriaMetrics使用```-retentionPeriod```命令行标志进行配置，该标志采用一个数字，后跟一个时间单位字符```-h（ours）、d（ays）、w（eeks）、y（ears）```。如果未指定时间单位，则假定为月。例如，```-retentionPeriod=3```表示数据将存储3个月，然后删除。默认保留期为一个月。
