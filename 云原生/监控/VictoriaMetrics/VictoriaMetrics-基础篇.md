@@ -169,6 +169,9 @@ helm install victoria-metrics vm/victoria-metrics-cluster -f values.yaml -n vict
 稍等片刻helm则会机提示安装成功，查询资源可以看到都已经部署起来了
 ![VictoriaMetrics Cluster deploy Success](./image/helm-success.jpg)
 ## 使用
+### 直接使用VictoriaMetrics进行监控
+
+### Prometheus平滑过度
 调整victoria-metrics-victoria-metrics-cluster-vminsert的service与victoria-metrics-victoria-metrics-cluster-vmselect的service，从ClusterIP模式改成NodePort模式，提供对外访问能力。修改现有Prometheus的配置，增加：
 ```
 remote_write:
