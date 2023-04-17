@@ -91,7 +91,9 @@ func MarshalMetricRow(dst []byte, metricNameRaw []byte, timestamp int64, value f
 
 4. vminsert会针对每一个storageNode启用一个携程，链接vmstorage的8400端口，把放进缓冲区的内容发送至vmstorage。vmstorage会默认开启8400，使用TCP的形式，接受vminsert传输过来的数据，并回复ack信号表示接受成功。如果指定的storageNode可以接受处理，则由指定的处理；如果指定的storageNode无法接受处理（离线、无响应等），则会采用轮训的方式，发给其他节点保处理
 
-5. vmstorage组件启动默认8400端口的TCP服务器进行数据写入接收，把数据包按照“包长度（8个字节）+数据”的形式进行block拆分，把每个block放进unmarshalWorkCh缓存队列中。
+### vmstorage
+
+1. vmstorage组件启动默认8400端口的TCP服务器进行数据写入接收，把数据包按照“包长度（8个字节）+数据”的形式进行block拆分，把每个block放进unmarshalWorkCh缓存队列中。
 ```
 // VM->lib->protoparser->common->unmarshal_work.go->StartUnmarshalWorkers
 
@@ -101,16 +103,12 @@ func readBlock(dst []byte, bc *handshake.BufferedConn, isReadOnly func() bool) (
 	sizeBuf.B = bytesutil.ResizeNoCopyMayOverallocate(sizeBuf.B, 8)
     // 取8个字节，表示后续的数据包长度
 	if _, err := io.ReadFull(bc, sizeBuf.B); err != nil {
-		if err != io.EOF {
-			readErrors.Inc()
-			err = fmt.Errorf("cannot read packet size: %w", err)
-		}
-		return dst, err
+    ...
 	}
 	packetSize := encoding.UnmarshalUint64(sizeBuf.B)
-    ...
+  ...
 	dst = bytesutil.ResizeWithCopyMayOverallocate(dst, dstLen+int(packetSize))
-    // 根据之前8个字节的内容，取真正数据包长度，返回转换成数据结构体
+  // 根据之前8个字节的内容，取真正数据包长度，返回转换成数据结构体
 	if n, err := io.ReadFull(bc, dst[dstLen:]); err != nil {
 		readErrors.Inc()
 		return dst, fmt.Errorf("cannot read packet with size %d bytes: %w; read only %d bytes", packetSize, err, n)
@@ -120,16 +118,14 @@ func readBlock(dst []byte, bc *handshake.BufferedConn, isReadOnly func() bool) (
 }
 ```
 
-6. 根据可用cpu数量，创建work，持续消费处理unmarshalWorkCh里的数据
+2. 根据可用cpu数量，创建work，持续消费处理unmarshalWorkCh里的数据
 ```
 // VM->lib->protoparser->common->unmarshal_work.go->StartUnmarshalWorkers
 
 // StartUnmarshalWorkers starts unmarshal workers.
 func StartUnmarshalWorkers() {
-	if unmarshalWorkCh != nil {
-		logger.Panicf("BUG: it looks like startUnmarshalWorkers() has been alread called without stopUnmarshalWorkers()")
-	}
-    // cgroup可用cpu数
+  ...
+  // cgroup可用cpu数
 	gomaxprocs := cgroup.AvailableCPUs()
 	unmarshalWorkCh = make(chan UnmarshalWork, gomaxprocs)
 	unmarshalWorkersWG.Add(gomaxprocs)
@@ -145,7 +141,7 @@ func StartUnmarshalWorkers() {
 }
 ```
 
-7. 根据vminsert的buf压缩规则，解压成MetricRow数组对象
+3. 根据vminsert的buf压缩规则，解压成MetricRow数组对象
 ```
 type MetricRow struct {
 	// MetricNameRaw contains raw metric name, which must be decoded
@@ -156,10 +152,79 @@ type MetricRow struct {
 	Value     float64
 }
 ```
-8. 
 
+4. 然后对MetricRow数组对象进行处理，生成信息对应的TSID，。会先比对上次操作是否是同一个MetricNameRow，是则取上次的TSID，其次是比对缓存层数据，查找同一个MetricNameRow获取TSID。都没有找到才是重新创建TSID。最后把rawRow信息存在缓存层并同时存入数据库
+```
+// VM->lib->storage->storage.go->add
+...
+for i := range mrs {
+  mr := &mrs[i]
+  ...
+  dstMrs[j] = mr
+  r := &rows[j]
+  j++
+  r.Timestamp = mr.Timestamp
+  r.Value = mr.Value
+  r.PrecisionBits = precisionBits
+  // 判断是否和上一次一致，一致则获取上一次的TSID
+  if string(mr.MetricNameRaw) == string(prevMetricNameRaw) {
+  	r.TSID = prevTSID
+		continue
+  }
+  //通过缓存获取，如果存在则获取缓存TSID
+  if s.getTSIDFromCache(&genTSID, mr.MetricNameRaw) {
+    ...
+    r.TSID = genTSID.TSID
+    ...
+  }
+  ...
+  // 都不存在，先存在pmrs里面
+  if err := pmrs.addRow(mr); err != nil {
+    ...
+  }
+}
+if pmrs != nil {
+  ...
+  for i := range pendingMetricRows {
+    ...
+    // 
+    date := uint64(r.Timestamp) / msecPerDay
+    // 生成TSID
+		if err := is.GetOrCreateTSIDByName(&r.TSID, pmr.MetricName, mr.MetricNameRaw, date); err != nil {
+      ...
+    }
+    genTSID.generation = idb.generation
+		genTSID.TSID = r.TSID
+    // 把生成的TSID存入缓存层
+		s.putTSIDToCache(&genTSID, mr.MetricNameRaw)
+		prevTSID = r.TSID
+		prevMetricNameRaw = mr.MetricNameRaw
+    ...
+  }
+}
+```
 
-### vmstorage
+生成TSID逻辑
+```
+func generateTSID(dst *TSID, mn *MetricName) {
+	dst.AccountID = mn.AccountID
+	dst.ProjectID = mn.ProjectID
+	dst.MetricGroupID = xxhash.Sum64(mn.MetricGroup)
+	if len(mn.Tags) > 0 {
+		dst.JobID = uint32(xxhash.Sum64(mn.Tags[0].Value))
+	}
+	if len(mn.Tags) > 1 {
+		dst.InstanceID = uint32(xxhash.Sum64(mn.Tags[1].Value))
+	}
+	dst.MetricID = generateUniqueMetricID()
+}
+```
+
+缓存层的读写
+```
+```
+
+数据
 
 
 ## 数据读取
