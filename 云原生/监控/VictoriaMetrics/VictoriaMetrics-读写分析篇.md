@@ -91,7 +91,9 @@ func MarshalMetricRow(dst []byte, metricNameRaw []byte, timestamp int64, value f
 
 4. vminsert会针对每一个storageNode启用一个携程，链接vmstorage的8400端口，把放进缓冲区的内容发送至vmstorage。vmstorage会默认开启8400，使用TCP的形式，接受vminsert传输过来的数据，并回复ack信号表示接受成功。如果指定的storageNode可以接受处理，则由指定的处理；如果指定的storageNode无法接受处理（离线、无响应等），则会采用轮训的方式，发给其他节点保处理
 
-5. vmstorage组件启动默认8400端口的TCP服务器进行数据写入接收，把数据包按照“包长度（8个字节）+数据”的形式进行block拆分，把每个block放进unmarshalWorkCh缓存队列中。
+### vmstorage
+
+1. vmstorage组件启动默认8400端口的TCP服务器进行数据写入接收，把数据包按照“包长度（8个字节）+数据”的形式进行block拆分，把每个block放进unmarshalWorkCh缓存队列中。
 ```
 // VM->lib->protoparser->common->unmarshal_work.go->StartUnmarshalWorkers
 
@@ -120,7 +122,7 @@ func readBlock(dst []byte, bc *handshake.BufferedConn, isReadOnly func() bool) (
 }
 ```
 
-6. 根据可用cpu数量，创建work，持续消费处理unmarshalWorkCh里的数据
+2. 根据可用cpu数量，创建work，持续消费处理unmarshalWorkCh里的数据
 ```
 // VM->lib->protoparser->common->unmarshal_work.go->StartUnmarshalWorkers
 
@@ -145,7 +147,7 @@ func StartUnmarshalWorkers() {
 }
 ```
 
-7. 根据vminsert的buf压缩规则，解压成MetricRow数组对象
+3. 根据vminsert的buf压缩规则，解压成MetricRow数组对象
 ```
 type MetricRow struct {
 	// MetricNameRaw contains raw metric name, which must be decoded
@@ -156,10 +158,11 @@ type MetricRow struct {
 	Value     float64
 }
 ```
-8. 
+
+4. 利用MetricRow对象的MetricNameRaw来判断
 
 
-### vmstorage
+
 
 
 ## 数据读取
