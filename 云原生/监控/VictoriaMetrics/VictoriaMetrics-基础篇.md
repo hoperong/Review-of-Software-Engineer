@@ -1,16 +1,16 @@
 # VictoriaMetrics-基础篇
 说到云原生监控方案，第一时间基本上都会想到Prometheus+AlertManager+Grafana的一套成熟解决方案。Prometheus作为监控核心，具备强大的数据模型、高效率运作、丰富的监控能力、强大的查询语言PromQL、简单易用、管理方便等特点。但是Prometheus目前在高可用层面上做的还并不完美。为此，在开源社区中，孕育出了许多替代、增强方案，VictoriaMetrics属于其中较为优异的一个，是一个快速、经济高效且可扩展的监控解决方案和时间序列数据库。
 ## 突出特点
-1. 它可以作为Prometheus的长期储存，且支持Prometheus查询API，可以在Grafana中用作Prometheus的代替品
-2. 部署简单，无论是单节点版本还是集群版本，都只需要运行所需的组件可执行文件（每个组件都是一个可执行文件），运行前不需要安装任何依赖，易于设置和操作
-3. 使用vmbackup/vmrestore工具可以轻松快速地将即时快照备份到S3或GCS
-4. 基于PromQL的查询语言实现MetricsQL，对PromSQL进行改造
-5. 读写性能比InfluxDB和TimescaleDB高达20倍；百万时间序列数据下，内存使用比InfluxDB少10倍，比Prometheus、Thanos或Cortex少7倍；数据高压缩，与Prometheus、Thanos或Cortex相比，所需的存储空间最多可减少7倍
-6. 具有高延迟IO和低IOPS
-7. 支持从第三方时序数据库获取数据源
+1. 它可以作为Prometheus的长期储存，且支持Prometheus查询API，可以在Grafana中用作Prometheus的代替品；
+2. 部署简单，无论是单节点版本还是集群版本，都只需要运行所需的组件可执行文件（每个组件都是一个可执行文件），运行前不需要安装任何依赖，易于设置和操作；
+3. 使用vmbackup/vmrestore工具可以轻松快速地将即时快照备份到S3或GCS；
+4. 基于PromQL的查询语言实现MetricsQL，对PromSQL进行改造；
+5. 读写性能比InfluxDB和TimescaleDB高达20倍；百万时间序列数据下，内存使用比InfluxDB少10倍，比Prometheus、Thanos或Cortex少7倍；数据高压缩，与Prometheus、Thanos或Cortex相比，所需的存储空间最多可减少7倍；
+6. 具有高延迟IO和低IOPS；
+7. 支持从第三方时序数据库获取数据源。
 
 ### 快速接入Prometheus获取数据源
-数据源接入层面，VictoriaMetrics支持通过Prometheus的远程写入方式直接兼容Prometheus的数据写入，同时也支持搜集多个Prometheus数据汇总
+数据源接入层面，VictoriaMetrics支持通过Prometheus的远程写入方式直接兼容Prometheus的数据写入，同时也支持搜集多个Prometheus数据汇总。
 ```
 remote_write:
   - url: http://<victoriametrics-addr>:8428/api/v1/write
@@ -21,21 +21,21 @@ global:
     datacenter: dc-123
 ```
 
-VictoriaMetrics还支持直接取代Prometheus进行exporter搜集
+VictoriaMetrics还支持直接取代Prometheus进行exporter搜集。
 ```
 使用-promscrape.config配置Prometheus的prometheus.yml
 ```
 
 针对Prometheus，VictoriaMetrics进行了一些优化：
-1. 增加了```extra_label=<label_name>=<label_value>```可选的查询支持，可用于基于额外标签进行查询过滤。例如```/api/v1/query_range?extra_label=user_id=123&extra_label=group_id=456&query=<query>```，会返回额外标签中包含```{user_id="123",group_id="456"}```的结果
-2. 增加了```extra_filters[]=series_selector```可选的查询支持，可用于基于拓展标签进行规则匹配的查询过滤。例如```/api/v1/query_range?extra_filters[]={env=~"prod|staging",user="xyz"}&query=<query>```，会返回额外标签中包含```{env=~"prod|staging",user="xyz"}```的结果
-3. 支持```start```和```end```，使用多种时间格式，如1562529662.678、2022-03-29T01:02:03Z、2022-03、1h5m等
-4. 在```/api/v1/query```和```/api/v1/query_range```中增加了round_digits参数，它可用于将响应值四舍五入到小数点后给定的位数。
-5. 在```/api/v1/labels and /api/v1/label/<labelName>/values```中增加了limit参数，用于限制返回条目的数量
-6. 在```/api/v1/series```中增加了limit参数，用于限制返回条目的数量
-7. 新增```/api/v1/series/count```，返回数据库中时间序列的总数
-8. 新增```/api/v1/status/active_queries```，返回当前正在运行的查询列表
-9. 新增```/api/v1/status/top_queries```，返回```topByCount```最常执行的查询；返回```topByAvgDuration```平均执行持续时间最长的查询；返回```topBySumDuration```执行时间最长的查询；
+1. 增加了```extra_label=<label_name>=<label_value>```可选的查询支持，可用于基于额外标签进行查询过滤。例如```/api/v1/query_range?extra_label=user_id=123&extra_label=group_id=456&query=<query>```，会返回额外标签中包含```{user_id="123",group_id="456"}```的结果；
+2. 增加了```extra_filters[]=series_selector```可选的查询支持，可用于基于拓展标签进行规则匹配的查询过滤。例如```/api/v1/query_range?extra_filters[]={env=~"prod|staging",user="xyz"}&query=<query>```，会返回额外标签中包含```{env=~"prod|staging",user="xyz"}```的结果；
+3. 支持```start```和```end```，使用多种时间格式，如1562529662.678、2022-03-29T01:02:03Z、2022-03、1h5m等；
+4. 在```/api/v1/query```和```/api/v1/query_range```中增加了round_digits参数，它可用于将响应值四舍五入到小数点后给定的位数；
+5. 在```/api/v1/labels and /api/v1/label/<labelName>/values```中增加了limit参数，用于限制返回条目的数量；
+6. 在```/api/v1/series```中增加了limit参数，用于限制返回条目的数量；
+7. 新增```/api/v1/series/count```，返回数据库中时间序列的总数；
+8. 新增```/api/v1/status/active_queries```，返回当前正在运行的查询列表；
+9. 新增```/api/v1/status/top_queries```，返回```topByCount```最常执行的查询；返回```topByAvgDuration```平均执行持续时间最长的查询；返回```topBySumDuration```执行时间最长的查询。
 
 除了支持Prometheus作为数据源外，VictoriaMetrics还支持其他数据源：
 1. DataDog agent
@@ -48,21 +48,21 @@ VictoriaMetrics还支持直接取代Prometheus进行exporter搜集
 ![VictoriaMetrics Cluster](https://docs.victoriametrics.com/assets/images/Naive_cluster_scheme.png)
 
 VictoriaMetrics集群由以下服务组成：
-1. vmstorage，存储原始数据并返回给定标签过滤器的给定时间范围内的查询数据
-2. vminsert，接受接收的数据，并根据对度量名称及其所有标签的一致哈希在vmstorage节点之间传播数据
-3. vmselect，通过从所有配置的vmstorage节点获取所需数据来执行传入查询
+1. vmstorage，存储原始数据并返回给定标签过滤器的给定时间范围内的查询数据；
+2. vminsert，接受接收的数据，并根据对度量名称及其所有标签的一致哈希在vmstorage节点之间传播数据；
+3. vmselect，通过从所有配置的vmstorage节点获取所需数据来执行传入查询。
 
-每个服务可以独立扩展，并且可以在最合适的硬件上运行。vmstorage节点不了解彼此，不相互通信，也不共享任何数据。这是一个无共享架构。它提高了集群可用性，简化了集群维护和集群扩展。
+每个服务可以独立扩展，并且可以在最合适的硬件上运行。vmstorage节点不了解彼此，不相互通信，也不共享任何数据。这是一个无共享架构，它提高了集群可用性，简化了集群维护和集群扩展。
 
 VictoriaMetrics在开源层面，提供以下组件：
-1. vmui：负责vm页面展示，提供数据查询、指标与基数查询、查询分析、链路分析、job分析面板等功能
-2. vmagent：负责数据采集、重新标记和过滤收集，并通过Prometheus协议将数据存储到VictoriaMetrics或其他支持Prometheus协议的存储系统中。支持按时间和标签聚合样本后同时复制多个远程存储系统，且能在传输故障时缓存数据，等待恢复后继续传输；支持抓取暴露数百万时间序列的目标与写入多个租户中；支持kafka读写
-3. vminsert：负责数据插入，支持不同格式、不同租户的数据
-4. vmstorage：负责数据存储，具有高压缩率、低资源消耗、高性能的特点
-5. vmselect：负责数据查询，支持数据统一查询与多租户数据隔离查询
-6. vmalert：负责告警，和Prometheus一样支持纪录、告警两种规则配置与发送告警通知，允许在注解中使用Go 模板来格式化数据、迭代或执行表达式，支持跨租户发送警报和记录规则
-7. vmbackup：负责数据备份，支持增量备份和全量备份，可以做到每小时、每天、每周和每月备份，支持本地存储、GCS、Azure Blob 存储、S3存储、任何与 S3 兼容的存储
-8. vmrestore：负责数据还原，支持随时中断与自动从断点恢复
+1. vmui：负责vm页面展示，提供数据查询、指标与基数查询、查询分析、链路分析、job分析面板等功能；
+2. vmagent：负责数据采集、重新标记和过滤收集，并通过Prometheus协议将数据存储到VictoriaMetrics或其他支持Prometheus协议的存储系统中。支持按时间和标签聚合样本后同时复制多个远程存储系统，且能在传输故障时缓存数据，等待恢复后继续传输；支持抓取暴露数百万时间序列的目标与写入多个租户中；支持kafka读写；
+3. vminsert：负责数据插入，支持不同格式、不同租户的数据；
+4. vmstorage：负责数据存储，具有高压缩率、低资源消耗、高性能的特点；
+5. vmselect：负责数据查询，支持数据统一查询与多租户数据隔离查询；
+6. vmalert：负责告警，和Prometheus一样支持纪录、告警两种规则配置与发送告警通知，允许在注解中使用Go 模板来格式化数据、迭代或执行表达式，支持跨租户发送警报和记录规则；
+7. vmbackup：负责数据备份，支持增量备份和全量备份，可以做到每小时、每天、每周和每月备份，支持本地存储、GCS、Azure Blob 存储、S3存储、任何与 S3 兼容的存储；
+8. vmrestore：负责数据还原，支持随时中断与自动从断点恢复。
 ## 能力
 ### 保存
 VictoriaMetrics使用```-retentionPeriod```命令行标志进行配置，该标志采用一个数字，后跟一个时间单位字符```-h（ours）、d（ays）、w（eeks）、y（ears）```。如果未指定时间单位，则假定为月。例如，```-retentionPeriod=3```表示数据将存储3个月，然后删除。默认保留期为一个月。
@@ -103,8 +103,8 @@ part会定期合并为较大的part，生成的部分在```<-storageDataPath>/da
 有关合并过程的信息支持在Grafana仪表板中查看。
 
 合并过程提高了压缩率，并使磁盘上的部件数量保持相对较低。执行合并过程的好处如下：
-1. 它提高了查询性能，因为每次查询都会检查较少的部分
-2. 它减少了数据文件的数量，因为每个部分都包含固定数量的文件
+1. 它提高了查询性能，因为每次查询都会检查较少的部分；
+2. 它减少了数据文件的数量，因为每个部分都包含固定数量的文件。
 
 存储或是合并，都不会只保存部分part，part会以数据整体的形式，要么被全部保存成功，要么全部失败。part是不可变的。
 ### 监控
@@ -115,37 +115,37 @@ VictoriaMetrics在```/api/v1/status/active_queries```页面上公开当前正在
 VictoriaMetrics在```/api/v1/status/top_queries```页面上公开了执行时间最长的查询。
 ### TSDB状态
 VictoriaMetrics以类似于Prometheus的方式在```/api/v1/status/TSDB```页面返回TSDB统计信息：
-1. ```topN=N```，其中N是响应数量。默认情况下，返回前10个。
-2. ```date=YYYY-MM-DD```，其中YYYY-MM-DD是收集统计数据的日期。默认情况下，收集当天的统计数据。
-3. ```focusLabel=LABEL_NAME```，返回seriesCountByFocusLabelValue列表中给定LABEL_NAME的时间序列数最多的标签值。
-4. ```match[]=SELECTOR```，其中SELECTOR是一个任意时间序列选择器，用于在统计计算期间考虑序列。默认情况下，将考虑所有系列。
-5. ```extra_label=LABEL=VALUE```，拓展标签筛选
+1. ```topN=N```，其中N是响应数量。默认情况下，返回前10个；
+2. ```date=YYYY-MM-DD```，其中YYYY-MM-DD是收集统计数据的日期。默认情况下，收集当天的统计数据；
+3. ```focusLabel=LABEL_NAME```，返回seriesCountByFocusLabelValue列表中给定LABEL_NAME的时间序列数最多的标签值；
+4. ```match[]=SELECTOR```，其中SELECTOR是一个任意时间序列选择器，用于在统计计算期间考虑序列。默认情况下，将考虑所有系列；
+5. ```extra_label=LABEL=VALUE```，拓展标签筛选。
 ### 推指标
 当出现无法拉去指标的场景下，VictoriaMetrics支持以Prometheus数据格式的方式，通过push模式进行指标推送：
-1. ```-pushmetrics.url```，推送地址，比如```-pushmetrics.url=http://victoria-metrics:8428/api/v1/import/prometheus```
-2. ```-pushmetrics.extraLabel```，拓展标签，支持以```label="value"```的形式给push数据增加标签
-3. ```-pushmetrics.interval```，push周期，默认10s
+1. ```-pushmetrics.url```，推送地址，比如```-pushmetrics.url=http://victoria-metrics:8428/api/v1/import/prometheus```；
+2. ```-pushmetrics.extraLabel```，拓展标签，支持以```label="value"```的形式给push数据增加标签；
+3. ```-pushmetrics.interval```，push周期，默认10s。
 ### 缓存
 VictoriaMetrics使用各种内部缓存。在正常关机期间（例如，当VictoriaMetrics通过发送SIGINT信号停止时），这些缓存存储到<-storageDataPath>/cache目录中。缓存将在下次VictoriaMetrics启动时读取。有时需要在下次启动时删除这些缓存。这可以通过在重启VictoriaMetrics之前将reset_cache_on_startup文件放置在<-storageDataPath>/cache目录中来执行。
 
 VictoriaMetrics使用各种内存缓存来加快数据摄取和查询性能。每种类型缓存指标可以在```/metrics```页面导出：
-1. ```vm_cache_size_bytes```，实际缓存大小
-2. ```vm_cache_size_max_bytes```，缓存大小限制
-3. ```vm_cache_requests_total```，对缓存的请求数
-4. ```vm_cache_misses_total```，缓存未命中数
-5. ```vm_cache_entries```，缓存中的条目数
+1. ```vm_cache_size_bytes```，实际缓存大小；
+2. ```vm_cache_size_max_bytes```，缓存大小限制；
+3. ```vm_cache_requests_total```，对缓存的请求数；
+4. ```vm_cache_misses_total```，缓存未命中数；
+5. ```vm_cache_entries```，缓存中的条目数。
 
 支持在Grafana仪表板上查看缓存指标，面板显示了每种类型缓存的当前内存使用情况，以及缓存命中率。如果命中率接近100%，则缓存效率已经很高，不需要任何调整。
 ### 其他
 支持众多Prometheus具备的功能，比如Prometheus的标签重写、联邦等功能
 ## 与Prometheus对比
 优势：
-1. 性能优势。在相同配置、采集压力的情况下，相比使用Prometheus，存储空间最多可减少7倍，磁盘读写峰值最多可减少3-4倍，内存使用最多减少7倍。
-2. 更优秀的横向拓展、高可用方案。VictoriaMetrics集群模式，通过组件化各个能力，进行功能层面的架构解耦。由于负责读写的vmselect、vminsert组件都是无状态组件，可以灵活根据读写压力，进行组件的横向扩缩容；负责存储的vmstorage组件虽然是有状态组件，但是当存储压力增加时，同样支持横向扩容，扩容后只需要更新上下游的vmselect、vminsert组件配置并重启，即可提升VictoriaMetrics集群存储能力；采集压力的时候，可以利用扩容vmagent与vmagent的采集分组能力，进行分散压力采集。
+1. 性能优势。在相同配置、采集压力的情况下，相比使用Prometheus，存储空间最多可减少7倍，磁盘读写峰值最多可减少3-4倍，内存使用最多减少7倍；
+2. 更优秀的横向拓展、高可用方案。VictoriaMetrics集群模式，通过组件化各个能力，进行功能层面的架构解耦。由于负责读写的vmselect、vminsert组件都是无状态组件，可以灵活根据读写压力，进行组件的横向扩缩容；负责存储的vmstorage组件虽然是有状态组件，但是当存储压力增加时，同样支持横向扩容，扩容后只需要更新上下游的vmselect、vminsert组件配置并重启，即可提升VictoriaMetrics集群存储能力；采集压力的时候，可以利用扩容vmagent与vmagent的采集分组能力，进行分散压力采集；
 3. 数据多租户能力。VictoriaMetrics支持把不同类型的数据分别放到不同的租户里，每个租户通过 accountID 或 accountID:projectID的形式，在请求的url里做区分。租户的数量不影响性能，主要取决于所有租户的活跃总时间序列，每个租户的数据都均匀分布在后端vmstorage存储，但是不支持跨租户进行数据查询。
 
 缺点：
-1. 没有类似Prometheus的WAL日志，突然故障可能会丢失部分数据。Prometheus在接收到数据的时候，会先把数据写入内存，定期再写入磁盘。为了防止写入磁盘前数据丢失，还会再写入内存的同时简单的写入WAL文件里，当出现故障时，就可以通过WAL快速恢复当前状态。而VictoriaMetrics则在写入过程总，使用Go的chan作为数据缓存队列，多携程实现数据处理、压缩、存储等操作，故障下存在缓存数据丢失的情况。
+1. 没有类似Prometheus的WAL日志，突然故障可能会丢失部分数据。Prometheus在接收到数据的时候，会先把数据写入内存，定期再写入磁盘。为了防止写入磁盘前数据丢失，还会再写入内存的同时简单的写入WAL文件里，当出现故障时，就可以通过WAL快速恢复当前状态。而VictoriaMetrics则在写入过程总，使用Go的chan作为数据缓存队列，多携程实现数据处理、压缩、存储等操作，故障下存在缓存数据丢失的情况；
 2. 为了保证读写的速度，丢失了部分数据精度。vmstorage组件支持配置精度保存范围（1-64，64表示不丢失），以此在数据读写过程中，提升速度。
 ## 安装
 使用helm进行VictoriaMetrics集群模式的部署

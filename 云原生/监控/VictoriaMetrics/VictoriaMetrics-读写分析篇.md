@@ -103,16 +103,12 @@ func readBlock(dst []byte, bc *handshake.BufferedConn, isReadOnly func() bool) (
 	sizeBuf.B = bytesutil.ResizeNoCopyMayOverallocate(sizeBuf.B, 8)
     // 取8个字节，表示后续的数据包长度
 	if _, err := io.ReadFull(bc, sizeBuf.B); err != nil {
-		if err != io.EOF {
-			readErrors.Inc()
-			err = fmt.Errorf("cannot read packet size: %w", err)
-		}
-		return dst, err
+    ...
 	}
 	packetSize := encoding.UnmarshalUint64(sizeBuf.B)
-    ...
+  ...
 	dst = bytesutil.ResizeWithCopyMayOverallocate(dst, dstLen+int(packetSize))
-    // 根据之前8个字节的内容，取真正数据包长度，返回转换成数据结构体
+  // 根据之前8个字节的内容，取真正数据包长度，返回转换成数据结构体
 	if n, err := io.ReadFull(bc, dst[dstLen:]); err != nil {
 		readErrors.Inc()
 		return dst, fmt.Errorf("cannot read packet with size %d bytes: %w; read only %d bytes", packetSize, err, n)
@@ -128,10 +124,8 @@ func readBlock(dst []byte, bc *handshake.BufferedConn, isReadOnly func() bool) (
 
 // StartUnmarshalWorkers starts unmarshal workers.
 func StartUnmarshalWorkers() {
-	if unmarshalWorkCh != nil {
-		logger.Panicf("BUG: it looks like startUnmarshalWorkers() has been alread called without stopUnmarshalWorkers()")
-	}
-    // cgroup可用cpu数
+  ...
+  // cgroup可用cpu数
 	gomaxprocs := cgroup.AvailableCPUs()
 	unmarshalWorkCh = make(chan UnmarshalWork, gomaxprocs)
 	unmarshalWorkersWG.Add(gomaxprocs)
@@ -162,7 +156,78 @@ type MetricRow struct {
 4. 利用MetricRow对象的MetricNameRaw来判断
 
 
+4. 然后对MetricRow数组对象进行处理，生成信息对应的TSID，。会先比对上次操作是否是同一个MetricNameRow，是则取上次的TSID，其次是比对缓存层数据，查找同一个MetricNameRow获取TSID。都没有找到才是重新创建TSID。最后把rawRow信息存在缓存层并同时存入数据库
+```
+// VM->lib->storage->storage.go->add
+...
+for i := range mrs {
+  mr := &mrs[i]
+  ...
+  dstMrs[j] = mr
+  r := &rows[j]
+  j++
+  r.Timestamp = mr.Timestamp
+  r.Value = mr.Value
+  r.PrecisionBits = precisionBits
+  // 判断是否和上一次一致，一致则获取上一次的TSID
+  if string(mr.MetricNameRaw) == string(prevMetricNameRaw) {
+  	r.TSID = prevTSID
+		continue
+  }
+  //通过缓存获取，如果存在则获取缓存TSID
+  if s.getTSIDFromCache(&genTSID, mr.MetricNameRaw) {
+    ...
+    r.TSID = genTSID.TSID
+    ...
+  }
+  ...
+  // 都不存在，先存在pmrs里面
+  if err := pmrs.addRow(mr); err != nil {
+    ...
+  }
+}
+if pmrs != nil {
+  ...
+  for i := range pendingMetricRows {
+    ...
+    // 
+    date := uint64(r.Timestamp) / msecPerDay
+    // 生成TSID
+		if err := is.GetOrCreateTSIDByName(&r.TSID, pmr.MetricName, mr.MetricNameRaw, date); err != nil {
+      ...
+    }
+    genTSID.generation = idb.generation
+		genTSID.TSID = r.TSID
+    // 把生成的TSID存入缓存层
+		s.putTSIDToCache(&genTSID, mr.MetricNameRaw)
+		prevTSID = r.TSID
+		prevMetricNameRaw = mr.MetricNameRaw
+    ...
+  }
+}
+```
 
+生成TSID逻辑
+```
+func generateTSID(dst *TSID, mn *MetricName) {
+	dst.AccountID = mn.AccountID
+	dst.ProjectID = mn.ProjectID
+	dst.MetricGroupID = xxhash.Sum64(mn.MetricGroup)
+	if len(mn.Tags) > 0 {
+		dst.JobID = uint32(xxhash.Sum64(mn.Tags[0].Value))
+	}
+	if len(mn.Tags) > 1 {
+		dst.InstanceID = uint32(xxhash.Sum64(mn.Tags[1].Value))
+	}
+	dst.MetricID = generateUniqueMetricID()
+}
+```
+
+缓存层的读写
+```
+```
+
+数据
 
 
 ## 数据读取
